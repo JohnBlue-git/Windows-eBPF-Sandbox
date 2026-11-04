@@ -7,16 +7,17 @@
 
 namespace {
 
-const wchar_t* action_name(DWORD action)
+const wchar_t* kind_name(FileChangeKind kind)
 {
-    switch (action) {
-    case FILE_ACTION_ADDED: return L"added";
-    case FILE_ACTION_REMOVED: return L"removed";
-    case FILE_ACTION_MODIFIED: return L"modified";
-    case FILE_ACTION_RENAMED_OLD_NAME: return L"rename-from";
-    case FILE_ACTION_RENAMED_NEW_NAME: return L"rename-to";
-    default: return L"unknown";
+    switch (kind) {
+    case FileChangeKind::added: return L"added";
+    case FileChangeKind::removed: return L"removed";
+    case FileChangeKind::modified: return L"modified";
+    case FileChangeKind::renamed_from: return L"rename-from";
+    case FileChangeKind::renamed_to: return L"rename-to";
+    case FileChangeKind::unknown: break;
     }
+    return L"unknown";
 }
 
 class FileChangeLogAction final : public IAction {
@@ -28,7 +29,7 @@ public:
 
     boost::asio::awaitable<void> execute_async() override
     {
-        std::wcout << action_name(change_.action) << L": " << change_.relative_path << L'\n';
+        std::wcout << kind_name(change_.kind) << L": " << change_.relative_path << L'\n';
         co_return;
     }
 
@@ -46,9 +47,9 @@ int wmain(int argc, wchar_t* argv[])
     }
 
     try {
-        DirectoryWatcher watcher(argv[1], [](FileChange change) {
-            ActionLoop::getInstance().pushAction(
-                std::make_unique<FileChangeLogAction>(std::move(change)));
+        auto& loop = ActionLoop::get_instance();
+        DirectoryWatcher watcher(loop.get_executor(), argv[1], [&loop](FileChange change) {
+            loop.push_action(std::make_unique<FileChangeLogAction>(std::move(change)));
         });
         watcher.start();
         std::wcout << L"Watching " << argv[1]

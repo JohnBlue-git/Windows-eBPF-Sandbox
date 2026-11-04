@@ -11,6 +11,7 @@ connect.
 winvm/
 ├── vm.sh                     every run: test / start / ssh / stop / reset / status
 ├── build-image.sh            one time: ISO + eBPF MSI -> output/ebpf-win.qcow2 (runs Packer)
+├── common.sh                 shared by both: paths, die/log, KVM or TCG choice
 ├── qemu-docker/
 │   ├── Dockerfile            QEMU 10 (Debian trixie)
 │   └── qemu-docker.sh        drop-in qemu-system-x86_64 that runs QEMU 10 in Docker
@@ -80,7 +81,8 @@ WIN_IMAGE_NAME="Windows Server 2022 SERVERSTANDARDCORE" ./winvm/build-image.sh
 The script:
 
 1. Downloads `ebpf-for-windows.x64.1.7.0.msi` into `winvm/downloads/` and
-   checks its sha256.
+   checks its sha256. The version and hash come from `ebpf-for-windows.env`
+   in the repository root.
 2. Creates `winvm/keys/id_ed25519` if it does not exist.
 3. Runs Packer: unattended Windows Setup, OpenSSH, `bcdedit /set testsigning
    on`, reboot, then the eBPF MSI. `install-ebpf.ps1` fails the build if
@@ -90,16 +92,20 @@ The build runs headless. To watch it, connect a VNC viewer to the port Packer
 prints (127.0.0.1:59xx). From another machine, use an ssh tunnel:
 `ssh -L 5900:127.0.0.1:5900 <user>@<host>`.
 
+ISO: `./winvm/build-image.sh [path/to/iso]`. Without an argument it uses
+`$WIN_ISO`, then `winvm/iso/windows-server-2022.iso`. If `<iso>.sha256` exists
+next to the ISO, Packer checks the ISO against it (`WIN_ISO_SHA256` takes
+precedence).
+
 Overrides: `WIN_ISO`, `WIN_ISO_SHA256`, `WIN_IMAGE_NAME`, `WIN_IMAGE_INDEX`,
-`WIN_PRODUCT_KEY`, `WIN_ADMIN_PASSWORD`, `EBPF_VERSION` + `EBPF_MSI_SHA256`,
-`VM_CPUS`, `VM_MEMORY`, `HEADLESS=false`, `FORCE=1`, `PACKER_LOG=1`,
+`WIN_PRODUCT_KEY`, `WIN_ADMIN_PASSWORD`, `VM_CPUS`, `VM_MEMORY`, `HEADLESS=false`, `FORCE=1`, `PACKER_LOG=1`,
 `ACCEL=kvm|tcg`, `QEMU=<binary>`.
 
 **Without KVM**, `build-image.sh` and `vm.sh` use TCG with `-cpu max` and run
 QEMU 10 from Docker through `qemu-docker/qemu-docker.sh`. The host's QEMU 6.2
 (Ubuntu 22.04) crashes Windows Setup under TCG with
 `SYSTEM_THREAD_EXCEPTION_NOT_HANDLED`. The first run builds the `ebpf-win-qemu`
-Docker image.
+Docker image (tag `ebpf-win-qemu`; set `QEMU_DOCKER_IMAGE` to change it).
 
 ## 3. Test a build
 
@@ -118,6 +124,7 @@ first; `test` then reuses the running VM and leaves it running.
 ```sh
 ./winvm/vm.sh start              # boot (VNC=2 to also expose 127.0.0.1:5902)
 ./winvm/vm.sh ssh                # PowerShell in the VM
+./winvm/vm.sh ssh 'netsh ebpf show programs'   # or run one command
 ./winvm/vm.sh status
 ./winvm/vm.sh stop
 ./winvm/vm.sh reset              # discard all changes made in the VM

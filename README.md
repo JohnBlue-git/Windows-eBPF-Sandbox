@@ -10,7 +10,8 @@ PC or KVM.
   cross-compile the samples and the eBPF object.
 - **Test:** a Windows Server 2022 VM with
   [eBPF for Windows](https://github.com/microsoft/ebpf-for-windows) runs them.
-  QEMU runs in a second Docker container, so it works without KVM.
+  Without KVM, QEMU 10 runs in a second Docker container (TCG). With KVM,
+  the host's `qemu-system-x86_64` runs the VM.
 
 | Output | What it shows |
 |---|---|
@@ -29,6 +30,10 @@ PC or KVM.
 ./mingw/build.sh                        # build  -> out/mingw/   (about 1 min)
 ./winvm/vm.sh test                      # test on Windows        (about 5-10 min without KVM)
 ```
+
+`mingw/build.sh [Release|Debug|RelWithDebInfo|MinSizeRel]` takes the CMake
+build type (default `Release`). Overrides: `IMAGE` (Docker image tag, default
+`ebpf-win-mingw`), `OUT_DIR` (default `out/mingw`).
 
 `vm.sh test` ends with `All checks passed.` after these checks:
 
@@ -51,7 +56,7 @@ flowchart LR
             MINGW["CMake + Ninja<br/>MinGW-w64 g++ + mingw64-boost<br/>clang -target bpf"]
         end
         OUT["out/mingw/<br/>*.exe + bind_policy.bpf.o"]
-        subgraph C2["Docker container: ebpf-win-qemu"]
+        subgraph C2["Docker container: ebpf-win-qemu<br/>(TCG only; with KVM: host QEMU)"]
             subgraph VM["QEMU 10 VM: Windows Server 2022 + eBPF for Windows"]
                 RUN["guest-test.ps1<br/>runs samples, netsh ebpf"]
             end
@@ -82,8 +87,10 @@ flowchart TB
     CORE --- EXT
 ```
 
-`vm.sh` never starts Windows from the base image directly. Each test run gets
-a new copy-on-write overlay, so every test starts from the same clean Windows.
+`vm.sh` never starts Windows from the base image directly. It runs on a
+copy-on-write overlay. `vm.sh test` creates a new overlay, so the test starts
+from the same clean Windows, unless the VM is already running (`vm.sh start`):
+then it reuses that VM and its overlay.
 
 ### One time: create the base image
 
@@ -108,6 +115,7 @@ flowchart LR
 ```
 .
 ├── CMakeLists.txt                 samples + eBPF object
+├── ebpf-for-windows.env           eBPF for Windows version + sha256 pins (CMake and winvm/)
 ├── src/
 │   ├── actions/                   Boost.Asio ActionLoop + smoke test
 │   ├── file_monitor/              ReadDirectoryChangesW sample (Windows only)
@@ -129,9 +137,9 @@ flowchart LR
 
 ## Notes
 
-- **eBPF for Windows version:** 1.7.0 (pre-release), pinned in
-  `winvm/build-image.sh` (MSI) and `CMakeLists.txt` (headers). Change both
-  together.
+- **eBPF for Windows version:** 1.7.0 (pre-release). The version and the
+  sha256 of the headers tarball and of the MSI are in `ebpf-for-windows.env`.
+  `CMakeLists.txt` and `winvm/build-image.sh` both read it.
 - **JIT, not native:** `bind_policy.bpf.o` loads directly through the eBPF
   service's verifier and JIT. Native mode (`.o` -> signed `.sys`) needs MSVC
   and the WDK; this project does not use it. See

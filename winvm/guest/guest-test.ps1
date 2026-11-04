@@ -5,6 +5,8 @@ $ErrorActionPreference = 'Stop'
 
 $dir = 'C:\work\test'
 $wait = 10   # seconds to let a sample start or react; generous for TCG
+$blockedPort = 4444                  # BLOCKED_PORT in bpf/bind_policy.bpf.c
+$allowedPort = $blockedPort + 1
 
 Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $dir | Out-Null
@@ -21,21 +23,26 @@ function Start-Redirected($file, $arguments) {
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $p | Add-Member NoteProperty Stdout $p.StandardOutput.ReadToEndAsync()
-    $p | Add-Member NoteProperty Stderr $p.StandardError.ReadToEndAsync()
-    $p
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $proc | Add-Member NoteProperty Stdout $proc.StandardOutput.ReadToEndAsync()
+    $proc | Add-Member NoteProperty Stderr $proc.StandardError.ReadToEndAsync()
+    $proc
 }
 
 # Press Enter, wait for exit, print and return the output.
-function Stop-Redirected($p) {
-    $p.StandardInput.WriteLine()
-    $p.StandardInput.Close()
-    if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "$($p.StartInfo.FileName) did not stop" }
-    $out = $p.Stdout.Result + $p.Stderr.Result
+function Stop-Redirected($proc) {
+    $proc.StandardInput.WriteLine()
+    $proc.StandardInput.Close()
+    if (-not $proc.WaitForExit(120000)) { $proc.Kill(); throw "$($proc.StartInfo.FileName) did not stop" }
+    $out = $proc.Stdout.Result + $proc.Stderr.Result
     Write-Host $out.TrimEnd()
-    if ($p.ExitCode -ne 0) { throw "$($p.StartInfo.FileName) failed (exit $($p.ExitCode))" }
+    if ($proc.ExitCode -ne 0) { throw "$($proc.StartInfo.FileName) failed (exit $($proc.ExitCode))" }
     $out
+}
+
+# Program IDs of the loaded bind_policy programs (bind4 and bind6).
+function Get-BindPolicyIds {
+    (& netsh ebpf show programs) -match 'bind_policy_ipv[46]' | ForEach-Object { ($_.Trim() -split '\s+')[0] }
 }
 
 function Test-Bind([int]$port) {
@@ -52,19 +59,19 @@ Write-Step 'file_change_monitor.exe'
 $watched = 'C:\work\watched'
 Remove-Item -Recurse -Force $watched -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $watched | Out-Null
-$p = Start-Redirected "$dir\file_change_monitor.exe" $watched
+$monitor = Start-Redirected "$dir\file_change_monitor.exe" $watched
 Start-Sleep $wait
 Set-Content -Path "$watched\probe.txt" -Value 'hello'
 Start-Sleep $wait
-$out = Stop-Redirected $p
+$out = Stop-Redirected $monitor
 if ($out -notmatch 'added: probe.txt') { throw 'file_change_monitor did not report the new file' }
 
 Write-Step 'etw_process_monitor.exe'
-$p = Start-Redirected "$dir\etw_process_monitor.exe" ''
+$monitor = Start-Redirected "$dir\etw_process_monitor.exe" ''
 Start-Sleep $wait
 1..3 | ForEach-Object { cmd.exe /c exit 0 }
 Start-Sleep $wait
-$out = Stop-Redirected $p
+$out = Stop-Redirected $monitor
 # Kernel-Process event 1 = ProcessStart.
 if ($out -notmatch 'Kernel-Process ETW event id=1 ') { throw 'etw_process_monitor did not report a process start' }
 
@@ -75,10 +82,11 @@ foreach ($section in 'cgroup/bind4', 'cgroup/bind6') {
     if ($out -notmatch 'Program terminates within') { throw "verification failed: $section" }
 }
 
-Write-Step 'eBPF: attach cgroup/bind4 and check that binds to port 4444 are rejected'
-if (-not (Test-Bind 4444)) { throw 'port 4444 is not free before the test' }
-# netsh attaches the first program in the file (cgroup/bind4). The attach can
-# end with the netsh process, so keep one interactive netsh open during the checks.
+Write-Step "eBPF: attach cgroup/bind4 and check that binds to port $blockedPort are rejected"
+if (-not (Test-Bind $blockedPort)) { throw "port $blockedPort is not free before the test" }
+# netsh loads all programs in the file and attaches the first one (cgroup/bind4).
+# The attach can end with the netsh process, so keep one interactive netsh open
+# during the checks.
 $netsh = Start-Redirected 'netsh.exe' ''
 $netsh.StandardInput.WriteLine("ebpf add program filename=$dir\bind_policy.bpf.o")
 $id = $null
@@ -89,18 +97,19 @@ for ($i = 0; $i -lt 60 -and -not $id; $i++) {
 }
 if (-not $id) { Stop-Redirected $netsh | Out-Null; throw 'bind_policy_ipv4 did not load' }
 & netsh ebpf show programs
-$blocked = -not (Test-Bind 4444)
-$other = Test-Bind 4445
-$netsh.StandardInput.WriteLine("ebpf delete program $id")
+$blocked = -not (Test-Bind $blockedPort)
+$other = Test-Bind $allowedPort
+foreach ($loadedId in Get-BindPolicyIds) { $netsh.StandardInput.WriteLine("ebpf delete program $loadedId") }
 $netsh.StandardInput.WriteLine('exit')
 Stop-Redirected $netsh | Out-Null
-Write-Host "bind 4444 rejected: $blocked; bind 4445 allowed: $other"
-if (-not $blocked) { throw 'bind to port 4444 was not rejected' }
-if (-not $other) { throw 'bind to port 4445 was rejected' }
+Write-Host "bind $blockedPort rejected: $blocked; bind $allowedPort allowed: $other"
+if (-not $blocked) { throw "bind to port $blockedPort was not rejected" }
+if (-not $other) { throw "bind to port $allowedPort was rejected" }
 
-Write-Step 'eBPF: program unloaded, port 4444 free again'
-for ($i = 0; $i -lt 30 -and ((& netsh ebpf show programs) -match 'bind_policy_ipv4'); $i++) { Start-Sleep 2 }
-if ((& netsh ebpf show programs) -match 'bind_policy_ipv4') { throw 'bind_policy_ipv4 is still loaded' }
-if (-not (Test-Bind 4444)) { throw 'port 4444 still rejected after unload' }
+Write-Step "eBPF: bind4 and bind6 programs unloaded, port $blockedPort free again"
+for ($i = 0; $i -lt 30 -and (Get-BindPolicyIds); $i++) { Start-Sleep 2 }
+& netsh ebpf show programs
+if (Get-BindPolicyIds) { throw 'a bind_policy program is still loaded' }
+if (-not (Test-Bind $blockedPort)) { throw "port $blockedPort still rejected after unload" }
 
 Write-Host "`nAll checks passed."

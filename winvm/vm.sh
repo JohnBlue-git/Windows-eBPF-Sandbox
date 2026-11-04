@@ -7,6 +7,7 @@
 #
 # Usage:
 #   ./vm.sh test                   fresh overlay -> boot -> run guest/guest-test.ps1 on out/mingw -> shut down
+#                                  (if the VM is already running: reuse it and its overlay, leave it running)
 #   ./vm.sh start                  boot the VM in the background (keeps existing overlay)
 #   ./vm.sh ssh [command...]       PowerShell session (or one command) in the VM
 #   ./vm.sh stop                   shut the VM down cleanly
@@ -28,12 +29,12 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
+source "$HERE/common.sh"
 
-IMAGE="${IMAGE:-$HERE/output/ebpf-win.qcow2}"
+IMAGE="${IMAGE:-$HERE/output/$BASE_IMAGE_NAME}"
 RUN_DIR="$HERE/.run"
 OVERLAY="$RUN_DIR/overlay.qcow2"
 PIDFILE="$RUN_DIR/qemu.pid"
-KEY="$HERE/keys/id_ed25519"
 SSH_PORT="${SSH_PORT:-2223}"
 TEST_DIR="${TEST_DIR:-$REPO/out/mingw}"
 
@@ -41,29 +42,22 @@ cpus_default=$(nproc); (( cpus_default > 8 )) && cpus_default=8
 VM_CPUS="${VM_CPUS:-$cpus_default}"
 VM_MEMORY="${VM_MEMORY:-8192}"
 
-# Without KVM, QEMU emulates the CPU in software (TCG): much slower, but works.
-if [[ -z "${ACCEL:-}" ]]; then
-    if [[ -r /dev/kvm && -w /dev/kvm ]]; then ACCEL=kvm; else ACCEL=tcg; fi
+detect_accel
+if [[ "$ACCEL" == tcg ]]; then
+    ACCEL_ARGS=(-machine pc -accel tcg,thread=multi -cpu max)
+    BOOT_TIMEOUT="${BOOT_TIMEOUT:-3600}"
+    QEMU="${QEMU:-$QEMU_DOCKER}"
+else
+    ACCEL_ARGS=(-machine pc,accel=kvm -cpu host)
+    BOOT_TIMEOUT="${BOOT_TIMEOUT:-600}"
+    QEMU="${QEMU:-qemu-system-x86_64}"
 fi
-case "$ACCEL" in
-    kvm) ACCEL_ARGS=(-machine pc,accel=kvm -cpu host) ;;
-    tcg) ACCEL_ARGS=(-machine pc -accel tcg,thread=multi -cpu max) ;;
-    *)   echo "error: ACCEL must be kvm or tcg" >&2; exit 1 ;;
-esac
-if [[ "$ACCEL" == tcg ]]; then BOOT_TIMEOUT="${BOOT_TIMEOUT:-3600}"; else BOOT_TIMEOUT="${BOOT_TIMEOUT:-600}"; fi
-# Host QEMU 6.2 crashes Windows under TCG, so TCG runs QEMU 10 from Docker.
-if [[ "$ACCEL" == tcg ]]; then QEMU="${QEMU:-$HERE/qemu-docker/qemu-docker.sh}"; else QEMU="${QEMU:-qemu-system-x86_64}"; fi
 
-SSH_OPTS=(-i "$KEY" -p "$SSH_PORT"
-          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o LogLevel=ERROR -o ConnectTimeout=5 -o BatchMode=yes)
-SCP_OPTS=(-i "$KEY" -P "$SSH_PORT"
-          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          -o LogLevel=ERROR -o BatchMode=yes)
+COMMON_SSH_OPTS=(-i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+                 -o LogLevel=ERROR -o BatchMode=yes)
+SSH_OPTS=("${COMMON_SSH_OPTS[@]}" -p "$SSH_PORT" -o ConnectTimeout=5)
+SCP_OPTS=("${COMMON_SSH_OPTS[@]}" -P "$SSH_PORT")
 TARGET="Administrator@127.0.0.1"
-
-die() { echo "error: $*" >&2; exit 1; }
-log() { echo "==> $*"; }
 
 is_running() {
     [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
@@ -188,5 +182,5 @@ case "${1:-}" in
     reset)  cmd_reset ;;
     status) cmd_status ;;
     ssh)    shift; cmd_ssh "$@" ;;
-    *) sed -n '2,26p' "$0"; exit 1 ;;
+    *) awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0"; exit 1 ;;
 esac

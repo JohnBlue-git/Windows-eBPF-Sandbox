@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+namespace {
+
 class EtwLogAction final : public IAction {
 public:
     explicit EtwLogAction(KernelProcessEvent event)
@@ -16,8 +18,8 @@ public:
     {
         std::cout << "Kernel-Process ETW event id=" << event_.event_id
                   << " opcode=" << static_cast<unsigned>(event_.opcode)
-                  << " pid=" << event_.process_id
-                  << " tid=" << event_.thread_id << '\n';
+                  << " header_pid=" << event_.header_process_id
+                  << " header_tid=" << event_.header_thread_id << '\n';
         co_return;
     }
 
@@ -25,11 +27,13 @@ private:
     KernelProcessEvent event_;
 };
 
+} // namespace
+
 int wmain()
 {
     try {
         KernelProcessWatcher watcher([](KernelProcessEvent event) {
-            ActionLoop::getInstance().pushAction(std::make_unique<EtwLogAction>(event));
+            ActionLoop::get_instance().push_action(std::make_unique<EtwLogAction>(event));
         });
         watcher.start();
         std::cout << "Listening to Microsoft-Windows-Kernel-Process ETW. Press Enter to stop.\n";

@@ -8,12 +8,12 @@ if (-not ((bcdedit /enum '{current}') -match 'testsigning\s+Yes')) { throw 'test
 # In this MSI the JIT service (eBPFSvc) is part of eBPF_Runtime_Components.
 $msi = 'C:\Windows\Temp\ebpf-for-windows.msi'
 $log = 'C:\Windows\Temp\ebpf-install.log'
-$p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+$installer = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
     '/i', $msi, '/qn', '/norestart', '/l*v', $log,
     'INSTALLFOLDER="C:\Program Files\ebpf-for-windows"', 'ADDLOCAL=eBPF_Runtime_Components')
-if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
+if ($installer.ExitCode -ne 0 -and $installer.ExitCode -ne 3010) {
     Get-Content $log -Tail 40
-    throw "eBPF MSI failed: $($p.ExitCode)"
+    throw "eBPF MSI failed: $($installer.ExitCode)"
 }
 Remove-Item $msi -Force
 

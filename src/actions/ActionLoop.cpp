@@ -17,26 +17,31 @@ ActionLoop::ActionLoop()
 
 ActionLoop::~ActionLoop()
 {
+    // Let run() return once the queued actions are done, so no output is lost.
     stopping_.store(true, std::memory_order_relaxed);
     work_guard_.reset();
-    io_context_.stop();
     if (thread_.joinable()) {
         thread_.join();
     }
 }
 
-ActionLoop& ActionLoop::getInstance()
+ActionLoop& ActionLoop::get_instance()
 {
     static ActionLoop instance;
     return instance;
 }
 
-asio::awaitable<void> ActionLoop::executeAction(std::shared_ptr<IAction> action)
+asio::io_context::executor_type ActionLoop::get_executor() noexcept
+{
+    return io_context_.get_executor();
+}
+
+asio::awaitable<void> ActionLoop::execute_action(std::shared_ptr<IAction> action)
 {
     co_await action->execute_async();
 }
 
-void ActionLoop::pushAction(std::unique_ptr<IAction> action)
+void ActionLoop::push_action(std::unique_ptr<IAction> action)
 {
     if (!action) {
         throw std::invalid_argument("ActionLoop does not accept a null action");
@@ -48,16 +53,21 @@ void ActionLoop::pushAction(std::unique_ptr<IAction> action)
     auto shared_action = std::shared_ptr<IAction>(std::move(action));
     asio::co_spawn(
         io_context_,
-        executeAction(std::move(shared_action)),
+        execute_action(std::move(shared_action)),
         [](std::exception_ptr error) {
             if (error) {
-                try {
-                    std::rethrow_exception(error);
-                } catch (const std::exception& exception) {
-                    std::cerr << "Action failed: " << exception.what() << '\n';
-                } catch (...) {
-                    std::cerr << "Action failed with an unknown exception\n";
-                }
+                report_exception("Action", error);
             }
         });
+}
+
+void report_exception(const char* context, std::exception_ptr error) noexcept
+{
+    try {
+        std::rethrow_exception(error);
+    } catch (const std::exception& exception) {
+        std::cerr << context << " failed: " << exception.what() << '\n';
+    } catch (...) {
+        std::cerr << context << " failed with an unknown exception\n";
+    }
 }

@@ -5,8 +5,8 @@ $ProgressPreference = 'SilentlyContinue'
 $version = 'v9.5.0.0p1-Beta'
 $msi = 'C:\Windows\Temp\OpenSSH-Win64.msi'
 Invoke-WebRequest -Uri "https://github.com/PowerShell/Win32-OpenSSH/releases/download/$version/OpenSSH-Win64-v9.5.0.0.msi" -OutFile $msi
-$p = Start-Process msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -PassThru
-if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "OpenSSH MSI failed: $($p.ExitCode)" }
+$installer = Start-Process msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -PassThru
+if ($installer.ExitCode -ne 0 -and $installer.ExitCode -ne 3010) { throw "OpenSSH MSI failed: $($installer.ExitCode)" }
 Remove-Item $msi -Force
 
 Set-Service -Name sshd -StartupType Automatic

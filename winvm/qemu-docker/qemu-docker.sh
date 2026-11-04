@@ -23,20 +23,20 @@ for arg in "$@"; do
     [[ "$prev" == -name ]] && name="ebpf-win-qemu-${arg//[^A-Za-z0-9_.-]/_}"
     prev="$arg"
     # Paths appear bare (-fda /tmp/x) or inside options (-drive file=x,...).
-    for p in "$arg" ${arg//,/ }; do
-        p="${p#file=}"
-        [[ -e "$p" ]] || continue
-        p="$(realpath "$p")"
-        dirs+=("$(dirname "$p")")
-        if [[ "$p" == *.qcow2 ]]; then
-            while read -r b; do dirs+=("$(dirname "$b")"); done \
-                < <(qemu-img info --backing-chain "$p" 2>/dev/null | sed -n 's/^backing file: //p')
+    for path in "$arg" ${arg//,/ }; do
+        path="${path#file=}"
+        [[ -e "$path" ]] || continue
+        path="$(realpath "$path")"
+        dirs+=("$(dirname "$path")")
+        if [[ "$path" == *.qcow2 ]]; then
+            while read -r backing; do dirs+=("$(dirname "$backing")"); done \
+                < <(qemu-img info --backing-chain "$path" 2>/dev/null | sed -n 's/^backing file: //p')
         fi
     done
 done
 
 mounts=()
-while read -r d; do mounts+=(-v "$d:$d"); done < <(printf '%s\n' "${dirs[@]}" | sort -u)
+while read -r dir; do mounts+=(-v "$dir:$dir"); done < <(printf '%s\n' "${dirs[@]}" | sort -u)
 
 # A previous run that was killed (not shut down) can leave its container behind.
 docker rm -f "$name" >/dev/null 2>&1 || true

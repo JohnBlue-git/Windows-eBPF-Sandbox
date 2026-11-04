@@ -1,5 +1,7 @@
 #include "KernelProcessWatcher.hpp"
 
+#include "ActionLoop.hpp"
+
 #include <windows.h>
 #include <evntcons.h>
 #include <evntrace.h>
@@ -62,15 +64,13 @@ void KernelProcessWatcher::start()
 
     const HRESULT guid_status = CoCreateGuid(&properties_->Wnode.Guid);
     if (FAILED(guid_status)) {
-        properties_ = nullptr;
-        properties_buffer_.clear();
+        stop();
         throw_etw_error(static_cast<ULONG>(guid_status), "CoCreateGuid");
     }
 
     const ULONG start_status = StartTraceW(&session_handle_, session_name_.data(), properties_);
     if (start_status != ERROR_SUCCESS) {
-        properties_ = nullptr;
-        properties_buffer_.clear();
+        stop();
         throw_etw_error(start_status, "StartTraceW");
     }
 
@@ -146,10 +146,8 @@ void KernelProcessWatcher::process_event(PEVENT_RECORD record) noexcept
             record->EventHeader.ProcessId,
             record->EventHeader.ThreadId,
         });
-    } catch (const std::exception& error) {
-        std::cerr << "ETW callback failed: " << error.what() << '\n';
     } catch (...) {
-        std::cerr << "ETW callback failed with an unknown exception\n";
+        report_exception("ETW callback", std::current_exception());
     }
 }
 

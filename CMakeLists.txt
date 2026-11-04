@@ -22,7 +22,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 if(WIN32)
     target_link_libraries(action_loop PUBLIC ws2_32 mswsock)
-    target_compile_definitions(action_loop PUBLIC _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+    target_compile_definitions(action_loop PUBLIC _WIN32_WINNT=0x0A00 WINVER=0x0A00 WIN32_LEAN_AND_MEAN)
 endif()
 
 add_executable(asio_smoke_test src/actions/main.cpp)
@@ -63,11 +63,19 @@ foreach(target asio_smoke_test file_change_monitor etw_process_monitor)
 endforeach()
 
 # --- eBPF programs (ELF objects, loaded in the VM by netsh through the JIT) --------
-# Headers come from the same eBPF for Windows release that winvm/ installs.
-set(EBPF_FOR_WINDOWS_VERSION 1.7.0)
+# Headers come from the same eBPF for Windows release that winvm/ installs:
+# both read the version and hashes from ebpf-for-windows.env.
+set(EBPF_PIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/ebpf-for-windows.env")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${EBPF_PIN_FILE}")
+file(STRINGS "${EBPF_PIN_FILE}" ebpf_pins REGEX "^[A-Z0-9_]+=")
+foreach(pin IN LISTS ebpf_pins)
+    string(REGEX MATCH "^([A-Z0-9_]+)=(.*)$" pin_match "${pin}")
+    set(${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+endforeach()
+
 FetchContent_Declare(ebpf_for_windows
     URL "https://github.com/microsoft/ebpf-for-windows/archive/refs/tags/v${EBPF_FOR_WINDOWS_VERSION}.tar.gz"
-    URL_HASH SHA256=7608251c5717d1b845dcec44e9b508e22918b52f21ea771d0f0b29f44be2c35d
+    URL_HASH SHA256=${EBPF_FOR_WINDOWS_SOURCE_SHA256}
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     # Headers only: point at a directory without CMakeLists.txt so the
     # upstream project is not added to this build.
@@ -76,6 +84,21 @@ FetchContent_Declare(ebpf_for_windows
 FetchContent_MakeAvailable(ebpf_for_windows)
 
 find_program(BPF_CLANG_EXECUTABLE NAMES clang REQUIRED)
+
+if(MINGW)
+    # The mingw/ container toolchain that docs/WINDOWS_DESIGN.md documents.
+    # Other versions are not tested (for example the -include utility workaround above).
+    execute_process(COMMAND "${BPF_CLANG_EXECUTABLE}" -dumpversion
+        OUTPUT_VARIABLE BPF_CLANG_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT CMAKE_CXX_COMPILER_VERSION MATCHES "^14\\."
+       OR NOT Boost_VERSION VERSION_EQUAL 1.78
+       OR NOT BPF_CLANG_VERSION MATCHES "^20\\.")
+        message(FATAL_ERROR
+            "Expected MinGW-w64 GCC 14, Boost 1.78 and clang 20 (mingw/Dockerfile); found "
+            "GCC ${CMAKE_CXX_COMPILER_VERSION}, Boost ${Boost_VERSION}, clang ${BPF_CLANG_VERSION}.")
+    endif()
+endif()
+
 set(BPF_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin")
 set(BIND_POLICY_OBJECT "${BPF_OUTPUT_DIR}/bind_policy.bpf.o")
 

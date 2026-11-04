@@ -35,7 +35,7 @@ int main()
 {
     std::promise<void> completed;
     auto result = completed.get_future();
-    ActionLoop::getInstance().pushAction(std::make_unique<SmokeTestAction>(completed));
+    ActionLoop::get_instance().push_action(std::make_unique<SmokeTestAction>(completed));
     result.get();
     return 0;
 }

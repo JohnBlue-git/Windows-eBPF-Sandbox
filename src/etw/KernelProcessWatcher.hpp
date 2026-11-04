@@ -13,11 +13,14 @@
 #include <thread>
 #include <vector>
 
+// Event header metadata only; the provider payload is not decoded.
 struct KernelProcessEvent {
     USHORT event_id;
     UCHAR opcode;
-    ULONG process_id;
-    ULONG thread_id;
+    // The process and thread that logged the event. For ProcessStart (id=1)
+    // this is the creating process, not the new one.
+    ULONG header_process_id;
+    ULONG header_thread_id;
 };
 
 class KernelProcessWatcher {

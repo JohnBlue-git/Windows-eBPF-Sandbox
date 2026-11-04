@@ -1,0 +1,12 @@
+/build/
+/out/
+
+# Windows VM: large / machine-specific / secret files stay out of Git
+/winvm/iso/
+/winvm/downloads/
+/winvm/output/
+/winvm/.run/
+/winvm/keys/
+/winvm/packer_cache/
+*.qcow2
+*.iso

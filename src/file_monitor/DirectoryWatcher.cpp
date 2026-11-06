@@ -2,13 +2,13 @@
 
 #include "ActionLoop.hpp"
 
-#include <array>
 #include <cstddef>
 #include <iostream>
 #include <span>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include <boost/asio/async_result.hpp>
 #include <boost/asio/co_spawn.hpp>
@@ -178,7 +178,8 @@ void DirectoryWatcher::stop()
 
 asio::awaitable<void> DirectoryWatcher::run()
 {
-    alignas(FILE_NOTIFY_INFORMATION) std::array<std::byte, 64 * 1024> buffer{};
+    // On the heap: a 64 KiB coroutine local hangs the coroutine with MinGW GCC 14.
+    std::vector<std::byte> buffer(64 * 1024);
     while (!stop_requested_) {
         boost::system::error_code error;
         const std::size_t bytes_transferred = co_await async_read_changes(

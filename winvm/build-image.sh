@@ -21,9 +21,9 @@
 #   ACCEL            kvm or tcg     (default: kvm if /dev/kvm is usable, else tcg)
 #   QEMU             QEMU binary for tcg (default: qemu-docker/qemu-docker.sh, QEMU 10 in Docker)
 #   HEADLESS=false   show the QEMU window (otherwise watch via VNC 127.0.0.1:5900-5910)
-#   FORCE=1          overwrite an existing output/ directory
+#   FORCE=1          delete an existing output/ directory first
 #
-# The eBPF for Windows version and MSI sha256 come from ../ebpf-for-windows.env.
+# The eBPF for Windows version and build zip sha256 come from ../ebpf-for-windows.env.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,11 +34,14 @@ source "$REPO/ebpf-for-windows.env"
 
 ISO="${1:-${WIN_ISO:-$HERE/iso/windows-server-2022.iso}}"
 
-EBPF_MSI="$HERE/downloads/ebpf-for-windows.x64.$EBPF_FOR_WINDOWS_VERSION.msi"
-EBPF_URL="https://github.com/microsoft/ebpf-for-windows/releases/download/v$EBPF_FOR_WINDOWS_VERSION/ebpf-for-windows.x64.$EBPF_FOR_WINDOWS_VERSION.msi"
+# The MSI inside the Release build zip has a JIT-capable eBPFCore.sys (see
+# ../ebpf-for-windows.env), so the VM can load .o files with netsh.
+EBPF_ZIP="$HERE/downloads/ebpf-for-windows.Build.Release.x64.$EBPF_FOR_WINDOWS_VERSION.zip"
+EBPF_URL="https://github.com/microsoft/ebpf-for-windows/releases/download/v$EBPF_FOR_WINDOWS_VERSION/Build.Release.x64.zip"
+EBPF_MSI="$HERE/downloads/ebpf-for-windows.x64.Release.$EBPF_FOR_WINDOWS_VERSION.msi"
 
 # --- prerequisites -----------------------------------------------------------
-for cmd in packer qemu-img ssh-keygen curl sha256sum; do
+for cmd in packer qemu-img ssh-keygen curl sha256sum unzip; do
     command -v "$cmd" >/dev/null || die "'$cmd' not found. See docs/winvm.md (host setup)."
 done
 detect_accel
@@ -51,18 +54,21 @@ if [[ -n "${WIN_ADMIN_PASSWORD:-}" && "$WIN_ADMIN_PASSWORD" =~ [\<\>\&\"\'] ]]; 
     die "WIN_ADMIN_PASSWORD must not contain < > & \" ' (it is embedded in XML)."
 fi
 
-if [[ -d output && "${FORCE:-0}" != 1 ]]; then
-    die "output/ already exists. Remove it or re-run with FORCE=1."
+if [[ -d output ]]; then
+    [[ "${FORCE:-0}" == 1 ]] || die "output/ already exists. Remove it or re-run with FORCE=1."
+    # Before 'packer validate', which fails while output/ exists.
+    rm -rf output
 fi
 
 # --- eBPF for Windows MSI (copied into the VM by Packer) ----------------------
-if [[ ! -f "$EBPF_MSI" ]]; then
-    mkdir -p "$(dirname "$EBPF_MSI")"
-    echo "Downloading $EBPF_URL"
-    curl -fL --retry 3 -o "$EBPF_MSI.part" "$EBPF_URL"
-    mv "$EBPF_MSI.part" "$EBPF_MSI"
+if [[ ! -f "$EBPF_ZIP" ]]; then
+    mkdir -p "$(dirname "$EBPF_ZIP")"
+    echo "Downloading $EBPF_URL (about 380 MB)"
+    curl -fL --retry 3 -o "$EBPF_ZIP.part" "$EBPF_URL"
+    mv "$EBPF_ZIP.part" "$EBPF_ZIP"
 fi
-echo "$EBPF_FOR_WINDOWS_MSI_SHA256  $EBPF_MSI" | sha256sum -c --quiet || die "sha256 mismatch: $EBPF_MSI"
+echo "$EBPF_FOR_WINDOWS_BUILD_ZIP_SHA256  $EBPF_ZIP" | sha256sum -c --quiet || die "sha256 mismatch: $EBPF_ZIP"
+unzip -p "$EBPF_ZIP" "Build Release x64/ebpf-for-windows.msi" > "$EBPF_MSI"
 
 # --- ssh key the host uses to log into the VM -------------------------------
 if [[ ! -f "$KEY" ]]; then
@@ -97,11 +103,10 @@ args=(
 [[ -n "${WIN_ADMIN_PASSWORD:-}" ]] && args+=(-var "admin_password=$WIN_ADMIN_PASSWORD")
 [[ -n "${VM_CPUS:-}"            ]] && args+=(-var "cpus=$VM_CPUS")
 [[ -n "${VM_MEMORY:-}"          ]] && args+=(-var "memory=$VM_MEMORY")
-force=(); [[ "${FORCE:-0}" == 1 ]] && force=(-force)   # 'packer validate' rejects -force
 
 packer init "$HERE/packer"
 packer validate "${args[@]}" "$HERE/packer"
-PACKER_LOG="${PACKER_LOG:-0}" packer build "${force[@]}" "${args[@]}" "$HERE/packer"
+PACKER_LOG="${PACKER_LOG:-0}" packer build "${args[@]}" "$HERE/packer"
 
 echo
 echo "Base image ready: $HERE/output/$BASE_IMAGE_NAME"

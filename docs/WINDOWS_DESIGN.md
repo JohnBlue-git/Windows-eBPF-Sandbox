@@ -33,9 +33,9 @@ Windows without a supported Windows equivalent.
 ### Version
 
 eBPF for Windows **1.7.0** (2026-10-16, pre-release; every release since 1.4.0
-is marked pre-release). The MSI (`ebpf-for-windows.x64.1.7.0.msi`) and the
-headers (source tarball of tag `v1.7.0`) are pinned by sha256 in
-`ebpf-for-windows.env`. `CMakeLists.txt` and `winvm/build-image.sh` both read
+is marked pre-release). The Release build zip (`Build.Release.x64.zip`, which
+contains the MSI) and the headers (source tarball of tag `v1.7.0`) are pinned
+by sha256 in `ebpf-for-windows.env`. `CMakeLists.txt` and `winvm/build-image.sh` both read
 the version and their hash from that file, so they cannot disagree.
 
 ### JIT, not native
@@ -50,9 +50,19 @@ eBPF for Windows can run a program in two ways:
 | Status | Microsoft says JIT is available on pre-release versions only | the production path |
 
 This project uses **JIT**: the `.o` builds in the Linux container and loads with
-`netsh ebpf add program`, so the VM needs no Visual Studio. In the 1.7.0 MSI,
-`eBPFSvc` (JIT) is part of `eBPF_Runtime_Components`; there is no separate JIT
-feature. If a future release drops JIT, the native path needs an MSVC + WDK
+`netsh ebpf add program`, so the VM needs no Visual Studio.
+
+Each release has two MSIs, and only one of them can load JIT programs:
+
+| MSI | Build configuration | `eBPFCore.sys` |
+|---|---|---|
+| `ebpf-for-windows.x64.1.7.0.msi` (release asset) | `NativeOnlyRelease` | No JIT or interpreter. Loading a `.o` fails: `netsh` prints `error 129: could not load program` (`ENOTSUP`). |
+| `Build Release x64/ebpf-for-windows.msi` inside `Build.Release.x64.zip` | `Release` | Includes uBPF (JIT). |
+
+`winvm/build-image.sh` therefore downloads `Build.Release.x64.zip` and installs
+the MSI from it. In that MSI, `eBPFSvc` (JIT) is part of
+`eBPF_Runtime_Components`; there is no separate JIT feature. If a future
+release stops publishing a `Release` build, the native path needs an MSVC + WDK
 build step (in the VM or on a Windows machine).
 
 ### Test signing

@@ -97,7 +97,7 @@ then it reuses that VM and its overlay.
 ```mermaid
 flowchart LR
     ISO["winvm/iso/<br/>windows-server-2022.iso"]
-    MSI["winvm/downloads/<br/>ebpf-for-windows.x64.1.7.0.msi<br/>(sha256 pinned)"]
+    MSI["winvm/downloads/<br/>eBPF for Windows 1.7.0<br/>Build.Release.x64.zip -> MSI<br/>(sha256 pinned)"]
     subgraph PK["build-image.sh + Packer, QEMU 10 in Docker"]
         P1["unattended Windows Setup<br/>(packer/autounattend.pkrtpl.xml)"]
         P2["install-openssh.ps1<br/>+ host ssh public key"]
@@ -138,10 +138,13 @@ flowchart LR
 ## Notes
 
 - **eBPF for Windows version:** 1.7.0 (pre-release). The version and the
-  sha256 of the headers tarball and of the MSI are in `ebpf-for-windows.env`.
+  sha256 of the headers tarball and of the Release build zip (which contains
+  the MSI) are in `ebpf-for-windows.env`.
   `CMakeLists.txt` and `winvm/build-image.sh` both read it.
 - **JIT, not native:** `bind_policy.bpf.o` loads directly through the eBPF
-  service's verifier and JIT. Native mode (`.o` -> signed `.sys`) needs MSVC
+  service's verifier and JIT. The VM uses the MSI from the release's
+  `Build.Release.x64.zip`: the standalone `.msi` asset is native-only and
+  cannot load `.o` files. Native mode (`.o` -> signed `.sys`) needs MSVC
   and the WDK; this project does not use it. See
   [docs/WINDOWS_DESIGN.md](docs/WINDOWS_DESIGN.md).
 - **Test signing:** eBPF for Windows drivers are not Microsoft-signed, so the

@@ -27,7 +27,7 @@ winvm/
 │
 │   local only, not in Git (see .gitignore):
 ├── iso/                      Windows ISO
-├── downloads/                eBPF for Windows MSI
+├── downloads/                eBPF for Windows Release build zip + extracted MSI
 ├── output/                   base image ebpf-win.qcow2
 ├── keys/                     ssh key the host uses to log in to the VM
 └── .run/                     per-run overlay disk, QEMU log and pid
@@ -80,9 +80,12 @@ WIN_IMAGE_NAME="Windows Server 2022 SERVERSTANDARDCORE" ./winvm/build-image.sh
 
 The script:
 
-1. Downloads `ebpf-for-windows.x64.1.7.0.msi` into `winvm/downloads/` and
-   checks its sha256. The version and hash come from `ebpf-for-windows.env`
-   in the repository root.
+1. Downloads `Build.Release.x64.zip` of eBPF for Windows 1.7.0 (about
+   380 MB) into `winvm/downloads/`, checks its sha256 and extracts
+   `ebpf-for-windows.msi` from it. The version and hash come from
+   `ebpf-for-windows.env` in the repository root. The standalone `.msi`
+   release asset is not used, because it cannot load JIT programs (see
+   [WINDOWS_DESIGN.md](WINDOWS_DESIGN.md#jit-not-native)).
 2. Creates `winvm/keys/id_ed25519` if it does not exist.
 3. Runs Packer: unattended Windows Setup, OpenSSH, `bcdedit /set testsigning
    on`, reboot, then the eBPF MSI. `install-ebpf.ps1` fails the build if
